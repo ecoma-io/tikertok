@@ -1,0 +1,50 @@
+name: Clean assets from Release
+
+on:
+  release:
+    types: [published] 
+
+jobs:
+  delete_source_code:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write 
+
+    steps:
+
+    - name: Get Release ID and Assets
+      id: get_release
+      run: |
+        RELEASE_ID=$(jq --raw-output '.release.id' "$GITHUB_EVENT_PATH")
+        echo "Release ID: $RELEASE_ID"
+        echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+
+        ASSETS=$(curl -sL \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" | \
+          jq -r '.[] | select(.name == "Source code (zip)" or .name == "Source code (tar.gz)") | .id')
+
+        if [ -z "$ASSETS" ]; then
+          echo "Not found asset to delete."
+        else
+          echo "Should delete assets: $ASSETS"
+          echo "assets_to_delete=$ASSETS" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Delete Source Code Assets
+      if: steps.get_release.outputs.assets_to_delete
+      run: |
+        RELEASE_ID="${{ steps.get_release.outputs.release_id }}"
+        ASSETS_TO_DELETE="${{ steps.get_release.outputs.assets_to_delete }}"
+
+        for ASSET_ID in $ASSETS_TO_DELETE; do
+          echo "Processing asset ID: $ASSET_ID"
+          curl -sL -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/assets/$ASSET_ID"
+          echo "Deleted asset ID: $ASSET_ID"
+        done
